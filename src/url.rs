@@ -433,8 +433,16 @@ mod tests {
             }];
         
         for i in tests.iter() {
-            let out = query_escape(i.inp.clone());
-            assert_eq!(Ok(out), i.out);
+
+            let escaped = query_escape(i.inp.clone());
+            assert_eq!(Ok(escaped.clone()), i.out);
+
+            // test that unescape(escape(x)) == x
+            let unescaped = query_unescape(escaped).unwrap();
+            if unescaped != i.inp {
+                println!("{}: {}", unescaped, i.inp);
+            }
+            assert_eq!(unescaped, i.inp);
         }
     }
 }
