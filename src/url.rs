@@ -6,24 +6,33 @@
 
   From http://en.wikipedia.org/wiki/URI_scheme#Examples:
 
-  foo://username:password@example.com:8042/over/there/index.dtb?type=animal&name=narwhal#nose
-  \_/   \_______________/ \_________/ \__/            \___/ \_/ \______________________/ \__/
-  |           |               |       |                |    |            |                |
-  |       userinfo         hostname  port              |    |          query          fragment
-  |    \________________________________/\_____________|____|/ \__/        \__/
-  |                    |                          |    |    |    |          |
-  |                    |                          |    |    |    |          |
-  scheme              authority                    path   |    |    interpretable as keys
+   foo://username:password@example.com:8042/over/there/index.dtb?type=animal&name=narwhal#nose
+   \_/   \_______________/ \_________/ \__/            \___/ \_/ \______________________/ \__/
+    |           |               |       |                |    |            |                |
+    |       userinfo         hostname  port              |    |          query          fragment
+    |    \________________________________/\_____________|____|/ \__/        \__/
+    |                    |                          |    |    |    |          |
+    |                    |                          |    |    |    |          |
+ scheme              authority                    path   |    |    interpretable as keys
   name   \_______________________________________________|____|/       \____/     \_____/
-  |                         |                          |    |          |           |
-  |                 hierarchical part                  |    |    interpretable as values
-  |                                                    |    |
-  |            path               interpretable as filename |
-  |   ___________|____________                              |
-  / \ /                        \                             |
-  urn:example:animal:ferret:nose               interpretable as extension
+    |                         |                          |    |          |           |
+    |                 hierarchical part                  |    |    interpretable as values
+    |                                                    |    |
+    |            path               interpretable as filename |
+    |   ___________|____________                              |
+   / \ /                        \                             |
+   urn:example:animal:ferret:nose               interpretable as extension
+ 
+                 path
+          _________|________
+  scheme /                  \
+   name  userinfo  hostname       query
+   _|__   ___|__   ____|____   _____|_____
+  /    \ /      \ /         \ /           \
+  mailto:username@example.com?subject=Topic
 
 
+  TODO: Fix the stringly typed Err(message).
 */
 
 use std::fmt;
@@ -110,7 +119,7 @@ pub fn should_escape(c: u8, mode: Encoding) -> bool {
             },
 
             _                                    => true
-    }        
+    }
 }
 
 /// Checks if a u8 is a hex representable.
@@ -127,7 +136,7 @@ pub fn ishex(c: u8) -> bool {
 /// TODO: Rewrite this function with b'0'... when the feature arrives.
 pub fn unhex(c: u8) -> u8 {
     return match c {
-        d if '0' as u8 <= d && d <= '9' as u8 => c - '0' as u8,  
+        d if '0' as u8 <= d && d <= '9' as u8 => c - '0' as u8,
         d if 'a' as u8 <= d && d <= 'f' as u8 => c - 'a' as u8 + 10,
         d if 'A' as u8 <= d && d <= 'F' as u8 => c - 'A' as u8 + 10,
         _                                     => 0
@@ -224,14 +233,105 @@ pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
 /// %AB into the byte 0xAB and '+' into ' ' (space). It returns an error if
 /// any % is not followed by two hexadecimal digits.
 pub fn query_unescape(s: String) -> Result<String, String> {
-    return unescape(s, EncodeQueryComponent);
+    unescape(s, EncodeQueryComponent)
+}
+
+
+/// String escaping
+pub fn escape(s: String, mode: Encoding) -> String {
+    let (mut space_count, mut hex_count) = (0, 0);
+
+    let s_vec = s.into_bytes();
+    let s_len = s_vec.len();
+
+    for c in s_vec.iter() {
+        if should_escape(*c, mode) {
+            if *c == (' ' as u8) && mode == EncodeQueryComponent {
+                space_count += 1;
+            } else {
+                hex_count += 1;
+            }
+        }
+    }
+
+    if space_count == 0 && hex_count == 0 {
+        return str::from_utf8(s_vec.as_slice()).unwrap().to_string();
+    }
+
+    let hex_dec = bytes!("0123456789ABCDEF");
+
+    let mut o = Vec::with_capacity(s_len + 2 * hex_count);
+
+    for i in s_vec.iter() {
+        match i {
+            x if *x == ' ' as u8 && mode == EncodeQueryComponent => {
+                o.push('+' as u8);
+            },
+
+            x if should_escape(*x, mode)                         => {
+                o.push('%' as u8);
+                o.push(*hex_dec
+                       .get((i >> 4) as uint)
+                       .unwrap());
+                o.push(*hex_dec
+                       .get((i & 15) as uint)
+                       .unwrap());
+            },
+
+            _                                                    => {
+                o.push(*i);
+            }
+        }
+    }
+
+    return str::from_utf8(o.as_slice()).unwrap().to_string();
+}
+
+/// query_escape escapes the string so it can
+/// be safely places inside a URL query.
+pub fn query_escape(s: String) -> String {
+    escape(s, EncodeQueryComponent)
+}
+
+/// Encapsulation of username and password details for a URL.
+/// An existing UserInfo is guaranteed to have a username set (possibly empty),
+/// and optionally a password.
+pub struct UserInfo {
+    /// Username for the URL.
+    username: String,
+    /// Password for the URL.
+    password: String,
+    /// Since the password is option, we need to flag it.
+    passwordset: bool
+}
+
+
+/// A URL represents a parsed URL (technically, a URI reference).
+/// The general form represented is:
+///
+/// scheme://[userinfo@]host/path[?query][#fragment]
+pub struct URL<'a> {
+    /// protocol scheme.
+    pub scheme:    String,
+    /// Encoded opaque data.
+    pub opaque:    String,
+    /// Username and password information.
+    pub user:      &'a UserInfo,
+    /// Host identifier
+    pub host:      String,
+    /// Path on the host
+    pub path_:     String,
+    /// Encoded query values, dropping the '?'
+    pub raw_query: String,
+    /// Fragment for references, without '#'
+    pub fragment:  String
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::{ishex, should_escape, EncodePath, EncodeUserPassword,
-                EncodeQueryComponent, query_unescape};
+                EncodeQueryComponent, query_unescape, query_escape};
 
     #[test]
     fn test_ishhex() {
@@ -254,13 +354,14 @@ mod tests {
         assert_eq!(should_escape('?' as u8, EncodeUserPassword),   false);
         assert_eq!(should_escape('?' as u8, EncodeQueryComponent), true);
     }
-    
+
+    struct EscapeTest {
+        inp: String,
+        out: Result<String, String>
+    }
+
     #[test]
-    fn test_unescape() {
-        struct EscapeTest {
-            inp: String,
-            out: Result<String, String>
-        }
+    fn test_query_unescape() {
         let tests: &[EscapeTest] = &[
             EscapeTest {
                 inp: "".to_string(),
@@ -304,6 +405,36 @@ mod tests {
             let out = query_unescape(i.inp.clone());
             assert_eq!(out, i.out);
 
+        }
+    }
+
+    #[test]
+    fn test_query_escape() {
+        let tests: &[EscapeTest] = &[
+            EscapeTest {
+                inp: "".to_string(),
+                out: Ok("".to_string())
+            },
+            EscapeTest {
+                inp: "abc".to_string(),
+                out: Ok("abc".to_string())
+            },
+            EscapeTest {
+                inp: "one two".to_string(),
+                out: Ok("one+two".to_string())
+            },
+            EscapeTest {
+                inp: "10%".to_string(),
+                out: Ok("10%25".to_string())
+            },
+            EscapeTest {
+                inp: " ?&=#+%!<>#\"{}|\\^[]`☺\t:/@$'()*,;".to_string(),
+                out: Ok("+%3F%26%3D%23%2B%25%21%3C%3E%23%22%7B%7D%7C%5C%5E%5B%5D%60%E2%98%BA%09%3A%2F%40%24%27%28%29%2A%2C%3B".to_string())
+            }];
+        
+        for i in tests.iter() {
+            let out = query_escape(i.inp.clone());
+            assert_eq!(Ok(out), i.out);
         }
     }
 }
