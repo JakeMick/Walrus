@@ -1,9 +1,8 @@
 /*! Walrus is a Web Application Library in Rust
  */
 
-#![crate_id = "walrus#0.1.0"]
-#![crate_type = "rlib"]
-#![crate_type = "dylib"]
+#![crate_id = "walrus"]
+#![crate_type = "lib"]
 #![license = "MIT"]
 
 #![deny(missing_doc)]

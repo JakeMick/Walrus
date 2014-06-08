@@ -135,17 +135,18 @@ pub fn unhex(c: u8) -> u8 {
 }
 
 
-/// unescape unescapes a string, the mode specifics
-/// which section of the URL string is being unescaped
+/// unescapes a string, the mode specifics which section of the URL string
+/// is being unescaped
 /// TODO: Rewrite this function with b'0'... when the feature arrives.
 /// TODO: Refactor this beast.
-/// TODO: Ask the IRC is from_utf(s.into_bytes()).unwrap() will never fail.
 pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
     let mut n = 0;
     let mut has_plus = false;
     let mut i = 0;
-    let s_slice = s.as_slice().clone();
+    let s_slice = s.as_slice();
     let s_len = s_slice.len();
+
+    // check that % is well formed, and count them
     while i < s_len {
         match s_slice[i] {
             // '%' as u8
@@ -158,38 +159,79 @@ pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
                     };
                     return Err(error_str(EscapeError)
                                .to_string()
+                               .append(" ")
                                .append(output));
                 }
                 i += 3;
             },
 
             // '+' as u8
-               43 => {
-                   if mode == EncodeQueryComponent {
-                       has_plus = true;
-                   }
-                   i += 1;
-               },
+            43 => {
+                if mode == EncodeQueryComponent {
+                    has_plus = true;
+                }
+                i += 1;
+            },
 
-               _  => {
-                   i += 1;
-               }
+            // fall through
+            _  => {
+                i += 1;
+            }
         }
     }
 
+    // if we don't have any % then return
     if n == 0 && !has_plus {
         return Ok(s_slice.to_string());
     }
 
+    // unescaped string
+    let mut o = Vec::with_capacity(s_len - 2 * n);
 
-    return Ok(s_slice.to_string());
+    i = 0;
+    while i < s_len {
+        match s_slice[i] {
+            // '%' as u8
+            37 => {
+                o.push(unhex(s_slice[i + 1]) << 4 | unhex(s_slice[i + 2]));
+                i += 3;
+            },
+
+            // '+' as u8
+            43 => {
+                if mode == EncodeQueryComponent {
+                    o.push(' ' as u8);
+                } else {
+                    o.push('+' as u8);
+                }
+                i += 1;
+            },
+
+            //fall through
+            _ => {
+                o.push(s_slice[i]);
+                i += 1
+            }
+
+        }
+    }
+
+
+    return Ok(str::from_utf8(o.as_slice()).unwrap().to_string());
+}
+
+/// query_unescape does the inverse transform of query_escape, converting
+/// %AB into the byte 0xAB and '+' into ' ' (space). It returns an error if
+/// any % is not followed by two hexadecimal digits.
+pub fn query_unescape(s: String) -> Result<String, String> {
+    return unescape(s, EncodeQueryComponent);
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::{ishex, should_escape, EncodePath, EncodeUserPassword,
-    EncodeQueryComponent};
+                EncodeQueryComponent, query_unescape};
 
     #[test]
     fn test_ishhex() {
@@ -214,7 +256,54 @@ mod tests {
     }
     
     #[test]
-    fn test_unescaped() {
-        assert!(false);
+    fn test_unescape() {
+        struct EscapeTest {
+            inp: String,
+            out: Result<String, String>
+        }
+        let tests: &[EscapeTest] = &[
+            EscapeTest {
+                inp: "".to_string(),
+                out: Ok("".to_string())
+            },
+            EscapeTest {
+                inp: "abc".to_string(),
+                out: Ok("abc".to_string())
+            },
+            EscapeTest {
+                inp: "1%41".to_string(),
+                out: Ok("1A".to_string())
+            },
+            EscapeTest {
+                inp: "1%41%42%43".to_string(),
+                out: Ok("1ABC".to_string())
+            },
+            EscapeTest {
+                inp: "%4a".to_string(),
+                out: Ok("J".to_string())
+            },
+            EscapeTest {
+                inp: "%6F".to_string(),
+                out: Ok("o".to_string())
+            },
+            EscapeTest {
+                inp: "%".to_string(),
+                out: Err("Escape error. %".to_string())
+            },
+            EscapeTest {
+                inp: "123%45%6".to_string(),
+                out: Err("Escape error. %6".to_string())
+            },
+            EscapeTest {
+                inp: "%zzzzz".to_string(),
+                out: Err("Escape error. %zz".to_string())
+            }
+            ];
+
+        for i in tests.iter() {
+            let out = query_unescape(i.inp.clone());
+            assert_eq!(out, i.out);
+
+        }
     }
 }
