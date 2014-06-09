@@ -2,6 +2,7 @@ extern crate walrus;
 use walrus::url::query_unescape;
 
 fn main() {
-    let a = query_unescape("%".to_string());
+    let x = &"dicksdfjndfknjsdfks".to_string();
+    let a = std::mem::size_of_val(&x);
 	println!("{}", a);
 }

@@ -69,7 +69,7 @@ pub struct Error<'a> {
     error_code: ErrorCode
 }
 
-
+/*
 impl<'a> Error<'a> {
     fn error(&'a self) -> String {
         return self.op.to_string()
@@ -79,6 +79,7 @@ impl<'a> Error<'a> {
             .append(error_str(self.error_code));
     }
 }
+*/
 
 /// Encoding is used to determine if a reserved error can appear unescaped.
 #[deriving(PartialEq)]
@@ -302,7 +303,46 @@ pub struct UserInfo {
     /// Password for the URL.
     password: String,
     /// Since the password is option, we need to flag it.
-    passwordset: bool
+    password_set: bool
+}
+
+
+impl UserInfo {
+    /// Returns a borrowed reference to the username.
+    pub fn username<'a>(&'a self) -> &'a String {
+        &self.username
+    }
+    
+    /// If the password is set, it return a Some() that
+    /// contains a borrowed reference to the password.
+    pub fn password<'a>(&'a self) -> Option<&'a String> {
+        if self.password_set {
+            return Some(&self.password);
+        }
+        return None;
+    }
+
+    /// String returns the decoded UserInfo
+    /// in the form "username[:password]"
+    pub fn string(&self) -> String {
+        let s = escape(self.username.clone(), EncodeUserPassword);
+        if self.password_set {
+            return s.append(escape(self.password.clone(), EncodeUserPassword).as_slice());
+        } else {
+            return s;
+        }
+    }
+}
+
+
+/// Returns a UserInfo containing the provided username
+/// and no password set.
+pub fn user(username: String) -> UserInfo {
+    UserInfo {
+        username: username,
+        password: "".to_string(),
+        password_set: false
+    }
 }
 
 
@@ -360,7 +400,7 @@ mod tests {
         out: Result<String, String>
     }
 
-    #[test]
+   #[test]
     fn test_query_unescape() {
         let tests: &[EscapeTest] = &[
             EscapeTest {
