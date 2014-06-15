@@ -324,6 +324,7 @@ impl UserInfo {
             return s;
         }
     }
+
 }
 
 
@@ -336,6 +337,16 @@ pub fn user(username: String) -> UserInfo {
         password_set: false
     }
 }
+
+/// Returns a UserInfo containing the provided username and password
+pub fn user_password(username: String, password: String) -> UserInfo {
+    UserInfo {
+        username: username,
+        password: password,
+        password_set: true
+    }
+}
+
 
 
 /// A URL represents a parsed URL (technically, a URI reference).
@@ -548,11 +559,50 @@ fn parse(rawurl: String, via_request: bool) -> Result<URL, ParseError> {
     return Ok(out);
     
 }
-/*
-fn parse_authority(authority: String) -> Result<(UserInfo, string), ParseError> {
 
+fn parse_authority(authority: String) -> Result<(UserInfo, String), ParseError> {
+    let auth_c = authority.clone();
+    let auth_slice = auth_c.as_slice();
+    let auth_len = auth_slice.len();
+
+    let i = auth_slice.rfind('@');
+
+    if i.is_none() {
+        return Ok((user("".to_string()), authority));
+    }
+
+    let j = i.unwrap();
+    let (mut userinfo, host) = (auth_slice.slice(0, j), auth_slice.slice(j + 1, auth_len));
+    return match userinfo.contains_char(':') {
+        true => {
+            let (username, password) = split(userinfo.to_string(), ":".to_string(), true);
+            let (uname, pword) = (unescape(username, EncodeUserPassword),
+                                  unescape(password, EncodeUserPassword));
+            if uname.is_err() || pword.is_err() {
+                return Err(EscapeError);
+            } else {
+                let (uame, pord) = (uname.unwrap(), pword.unwrap());
+                return Ok((user_password(uame, pord), host.to_str()));
+            }
+        },
+
+        false => {
+            let uinfo = unescape(userinfo.to_string(), EncodeUserPassword);
+            if uinfo.is_err() {
+                match uinfo {
+                    Err(x) => {
+                        return Err(x);
+                    },
+                    _      => {
+                        fail!("This is a bug, please contact the author.")
+                    }
+                }
+            }
+            return Ok((user(uinfo.unwrap()), host.to_str()));
+        }
+    }
 }
-*/
+
 
 
 /// Parse parses rawurl into a URL structure
