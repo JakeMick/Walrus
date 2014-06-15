@@ -32,52 +32,51 @@
   mailto:username@example.com?subject=Topic
 
 
-  TODO: Fix the stringly typed Err(message).
 */
 
 use std::fmt;
 use std::str;
+use std::ascii::OwnedStrAsciiExt;
 
-/// Error codes for Url parsing.
-pub enum ErrorCode {
-    /// Invalid url escape.
-    /// TODO: impl
-    /// func (e EscapeError) Error() string {
-    ///     return "invalid URL escape " + strconv.Quote(string(e))
-    /// }
-    EscapeError
+/// Error codes for URL parsing.
+#[deriving(PartialEq)]
+pub enum ParseError {
+    /// Empty Url.
+    EmptyUrl,
+    /// Invalid Uri.
+    InvalidUri,
+    /// Hexadecimal escape in host.
+    HexadecimalEscapeInHost,
+    /// Escape error
+    EscapeError,
+    /// Missing protocol scheme
+    MissingProtocolScheme
 }
 
-/// Converts the enum error codes to human readable strings.
-pub fn error_str(error: ErrorCode) -> &'static str {
+/// Converts the ParseError codes to human readable strings.
+pub fn error_str(error: ParseError) -> &'static str {
     return match error {
-        EscapeError => "Escape error.",
+        EmptyUrl                => "Empty url.",
+        InvalidUri              => "Invalid uri.",
+        HexadecimalEscapeInHost => "Hexadecimal escape in host.",
+        EscapeError             => "Escape error.",
+        MissingProtocolScheme   => "Missing protocol scheme."
     }
 }
 
 
-impl fmt::Show for ErrorCode {
+impl fmt::Show for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         error_str(*self).fmt(f)
     }
 }
 
+/*
 /// Error reports an error and the operation and URL that caused it.
 pub struct Error<'a> {
     op:  &'a str,
     url: &'a str,
-    error_code: ErrorCode
-}
-
-/*
-impl<'a> Error<'a> {
-    fn error(&'a self) -> String {
-        return self.op.to_string()
-            .append(" ")
-            .append(self.url)
-            .append(": ")
-            .append(error_str(self.error_code));
-    }
+    error_code: ParseError 
 }
 */
 
@@ -149,7 +148,7 @@ pub fn unhex(c: u8) -> u8 {
 /// is being unescaped
 /// TODO: Rewrite this function with b'0'... when the feature arrives.
 /// TODO: Refactor this beast.
-pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
+pub fn unescape(s: String, mode: Encoding) -> Result<String, ParseError> {
     let mut n = 0;
     let mut has_plus = false;
     let mut i = 0;
@@ -163,14 +162,7 @@ pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
             37 => {
                 n += 1;
                 if i + 2 >= s_len || !ishex(s_slice[i + 1]) || !ishex(s_slice[i + 2]) {
-                    let output = match s_len {
-                        q if q - i > 3 => s_slice.slice(i, i + 3),
-                        _              => s_slice.slice(i, s_len)
-                    };
-                    return Err(error_str(EscapeError)
-                               .to_string()
-                               .append(" ")
-                               .append(output));
+                    return Err(EscapeError);
                 }
                 i += 3;
             },
@@ -233,7 +225,7 @@ pub fn unescape(s: String, mode: Encoding) -> Result<String, String> {
 /// query_unescape does the inverse transform of query_escape, converting
 /// %AB into the byte 0xAB and '+' into ' ' (space). It returns an error if
 /// any % is not followed by two hexadecimal digits.
-pub fn query_unescape(s: String) -> Result<String, String> {
+pub fn query_unescape(s: String) -> Result<String, ParseError> {
     unescape(s, EncodeQueryComponent)
 }
 
@@ -350,28 +342,231 @@ pub fn user(username: String) -> UserInfo {
 /// The general form represented is:
 ///
 /// scheme://[userinfo@]host/path[?query][#fragment]
-pub struct URL<'a> {
+pub struct URL {
     /// protocol scheme.
     pub scheme:    String,
     /// Encoded opaque data.
     pub opaque:    String,
     /// Username and password information.
-    pub user:      &'a UserInfo,
+    pub user:      UserInfo,
     /// Host identifier
     pub host:      String,
     /// Path on the host
-    pub path_:     String,
+    pub path:      String,
     /// Encoded query values, dropping the '?'
     pub raw_query: String,
     /// Fragment for references, without '#'
     pub fragment:  String
 }
 
+fn empty_url() -> URL {
+    return URL {
+        scheme    : "".to_string(),
+        opaque    : "".to_string(),
+        user      : UserInfo {
+            username     : "".to_string(),
+            password     : "".to_string(),
+            password_set : false
+        },
+        host      : "".to_string(),
+        path      : "".to_string(),
+        raw_query : "".to_string(),
+        fragment  : "".to_string()
+    }
+}
+
+/// If scheme is of the form scheme:path
+/// Scheme must be [a-zA-Z]:[a-zA-Z0-9+-.]
+/// If the schere is a scheme in this form, it will separate it
+/// if not, it will put everything into path.
+/// It fails if there's no protocol specified.
+///
+/// TODO: I really don't like this function.
+/// It's tuply and the semantics are effed.
+/// Option -> Result?
+#[deprecated]
+pub fn get_scheme(raw_url: String) -> Option<(String, String)> {
+    let raw_bytes = raw_url.clone().into_bytes();
+    let raw_len = raw_bytes.len();
+    for i in range(0, raw_len) {
+        let c = raw_bytes.get(i);
+        match *c {
+            c if 'a' as u8 <= c && c <= 'z' as u8 ||
+                 'A' as u8 <= c && c <= 'Z' as u8 => {
+                continue;
+            }
+
+            c if '0' as u8 <= c && c <= '9' as u8 ||
+                 c == '+' as u8                   ||
+                 c == '-' as u8                   ||
+                 c == '.' as u8                   => {
+                if i == 0 {
+                    return None;
+                }
+                return Some(("".to_string(), raw_url.clone()));
+            }
+
+            c if c == ':' as u8                   => {
+                if i == 0 {
+                    return None;
+                }
+                return Some((str::from_utf8(raw_bytes.slice(0, i)).unwrap().to_string(),
+                             str::from_utf8(raw_bytes.slice(i+1, raw_len)).unwrap().to_string()));
+            }
+            _                                     => {
+                return Some(("".to_string(), raw_url));
+            }
+        }
+    }
+    return Some(("".to_string(), raw_url.clone()));
+}
+
+/// If s @ t:c:u has the substring c and cutc == false,
+///     return (t, c u)
+/// If cutc == true,
+///     return (t, u)
+/// If s does not has the substring c
+///     return (s, "")
+fn split(s: String, c: String, cutc: bool) -> (String, String) {
+    let s_slice = s.as_slice();
+    let res = s_slice.find_str(c.as_slice());
+    match res {
+        Some(x) => {
+            if cutc {
+                return (s_slice.slice(0, x).to_str(),
+                        s_slice.slice(x + c.len(), s.len()).to_str());
+            } else {
+                return (s_slice.slice(0, x).to_str(),
+                        s_slice.slice(x, s.len()).to_str());
+            }
+        },
+        None    => {
+            return (s.to_string(), "".to_string());
+        }
+    };
+}
+
+
+/// TODO: Rewrite this function with b'0'... when the feature arrives.
+fn getscheme(rawurl: String) -> Result<(String, String), ParseError> {
+    let r_clone = rawurl.clone();
+    let bytes = r_clone.as_slice();
+    let b_len = bytes.len();
+    for i in range(0, b_len) {
+        match bytes[i] {
+
+            x if 'a' as u8 <= x && x <= 'z' as u8 ||
+                 'A' as u8 <= x && x <= 'Z' as u8 => {
+                     continue;
+                 },
+
+            x if '0' as u8 <= x && x <= '9' as u8 ||
+                 x == '+' as u8                   ||
+                 x == '-' as u8                   ||
+                 x == '.' as u8                   => {
+                     if i == 0 {
+                        return Ok(("".to_string(), rawurl));
+                     }
+                 },
+
+            x if x == ':' as u8 => {
+                if i == 0 {
+                    return Err(MissingProtocolScheme);
+                } else {
+                    return Ok((bytes.slice(0, i).to_str(), bytes.slice(i + 1, b_len).to_str()));
+                }
+            },
+
+            _ => {
+                return Ok(("".to_string(), rawurl));
+            }
+        }
+    }
+    return Ok(("".to_string(), rawurl));
+}
+
+/// parse parses a URL from a string in one of two contexts.  If
+/// viaRequest is true, the URL is assumed to have arrived via an HTTP request,
+/// in which case only absolute URLs or path-absolute relative URLs are allowed.
+/// If viaRequest is false, all forms of relative URLs are allowed.
+fn parse(rawurl: String, via_request: bool) -> Result<URL, ParseError> {
+    
+    if rawurl == "".to_string() && via_request {
+        return Err(EmptyUrl);
+    }
+
+    let mut out = empty_url();
+
+    if rawurl == "*".to_string() {
+        out.path = "*".to_string();
+        return Ok(out);
+    }
+
+    let scheme = getscheme(rawurl.clone());
+
+    if scheme.is_err() {
+        match scheme {
+            Err(x) => {
+                return Err(x);
+            }
+            _      => {
+                fail!("This is a bug, please contact the author.");
+            }
+        }
+    }
+
+    let x = scheme.unwrap();
+
+    out.scheme = x.clone().val0().into_ascii_lower();
+    let mut rest = x.val1();
+
+    let rem = split(rest, "?".to_string(), true);
+    
+    rest = rem.clone().val0();
+    out.raw_query = rem.val1();
+
+    let raw_c = rawurl.clone();
+    let raw_slice = raw_c.as_slice();
+    if raw_slice[0] != '/' as u8 {
+        if out.scheme != "".to_string() {
+            // Rootless paths are considered opaque according to RFC 3986
+            out.opaque = rest;
+            return Ok(out)
+        }
+
+        if via_request {
+            return Err(InvalidUri)
+        }
+    }
+
+    if out.scheme != "".to_string() || !via_request && (raw_slice.slice(0,3).as_bytes() != bytes!("///")) {
+        if raw_slice.slice(0,2).as_bytes() == bytes!("//") {
+            let (authority, rest) = split(rest.as_slice().slice(2,rest.len()).to_str(), "/".to_string(), false);
+        }
+    }
+
+    return Ok(out);
+    
+}
+/*
+fn parse_authority(authority: String) -> Result<(UserInfo, string), ParseError> {
+
+}
+*/
+
+
+/// Parse parses rawurl into a URL structure
+/// The rawurl may be relative or absolute
+///pub fn Parse(rawurl: String) -> (&URL, Error) {
+///    let (u, frag) = split(rawurl, "#".to_string(), true);
+///}
+
 
 #[cfg(test)]
 mod tests {
     use super::{ishex, should_escape, EncodePath, EncodeUserPassword,
-                EncodeQueryComponent, query_unescape, query_escape};
+                EncodeQueryComponent, query_unescape, query_escape,
+                ParseError, EscapeError};
 
     #[test]
     fn test_ishhex() {
@@ -397,7 +592,7 @@ mod tests {
 
     struct EscapeTest {
         inp: String,
-        out: Result<String, String>
+        out: Result<String, ParseError>
     }
 
    #[test]
@@ -429,15 +624,15 @@ mod tests {
             },
             EscapeTest {
                 inp: "%".to_string(),
-                out: Err("Escape error. %".to_string())
+                out: Err(EscapeError)
             },
             EscapeTest {
                 inp: "123%45%6".to_string(),
-                out: Err("Escape error. %6".to_string())
+                out: Err(EscapeError)
             },
             EscapeTest {
                 inp: "%zzzzz".to_string(),
-                out: Err("Escape error. %zz".to_string())
+                out: Err(EscapeError)
             }
             ];
 
